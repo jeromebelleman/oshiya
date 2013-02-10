@@ -1,0 +1,67 @@
+#! /usr/bin/env python
+
+from subprocess import Popen, PIPE
+import argparse
+import subprocess, shlex
+
+def getpendings(queue):
+    p = Popen(shlex.split('bjobs -a -uall -q') + [queue], stdout=PIPE)
+    jobs = []
+    p.stdout.next()
+    for l in p.stdout:
+        fields = l.split()
+        if fields[2] == 'PEND':
+            jobs.append(fields[0])
+    return jobs
+
+def getslots(hostgroup):
+    p = Popen(['bhosts', hostgroup], stdout=PIPE)
+    slots = {}
+    p.stdout.next()
+    for l in p.stdout:
+        fields = l.split()
+        maxjobs, njobs = int(fields[3]), int(fields[4])
+        if fields[1] == 'ok' and maxjobs > njobs:
+            free = maxjobs - njobs
+            if free in slots:
+                slots[free].append(fields[0])
+            else:
+                slots[free] = [fields[0]]
+    return slots
+
+def brun(jobs, slots, maxjobs, dryrun):
+    offset = 0
+    for s, hosts in sorted(slots.items(), reverse=True):
+        for h in hosts:
+            for j in jobs[offset:s + offset]:
+                if offset >= maxjobs:
+                    return
+                cmd = 'brun -m %s %s' % (h, j)
+                if dryrun:
+                    print cmd
+                else:
+                    raise NotImplementedError
+                offset += 1
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument('queue')
+    p.add_argument('hostgroup')
+    p.add_argument('maxjobs', type=int)
+    p.add_argument('--dryrun', action='store_true')
+    p.add_argument('--force', action='store_true')
+    args = p.parse_args()
+
+    if args.maxjobs > 100 and not args.force:
+        fmt = """\
+Dispatching %d jobs could disturb the scheduler. Use --force to do it anyway.\
+"""
+        print fmt % args.maxjobs
+        return
+    
+    jobs = getpendings(args.queue)
+    slots = getslots(args.hostgroup)
+    brun(jobs, slots, args.maxjobs, args.dryrun)
+
+if __name__ == '__main__':
+    main()
